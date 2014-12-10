@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -779,11 +780,44 @@ func (b *Bucket) SignedURLWithArgs(path string, expires time.Time, params url.Va
 // contenttype is a string like image/png
 // path is the resource name in s3 terminalogy like images/ali.png [obviously exclusing the bucket name itself]
 func (b *Bucket) UploadSignedURL(path, method, content_type string, expires time.Time) string {
+	return b.UploadSignedURLWithArgs(path, method, content_type, expires, nil)
+}
+
+// UploadSignedURL returns a signed URL that allows anyone holding the URL
+// to upload the object at path. The signature is valid until expires.
+// contenttype is a string like image/png
+// path is the resource name in s3 terminalogy like images/ali.png [obviously exclusing the bucket name itself]
+// headers allows you to add other http headers (such as x-amz-acl)
+func (b *Bucket) UploadSignedURLWithArgs(path, method, content_type string, expires time.Time, headers http.Header) string {
 	expire_date := expires.Unix()
 	if method != "POST" {
 		method = "PUT"
 	}
-	stringToSign := method + "\n\n" + content_type + "\n" + strconv.FormatInt(expire_date, 10) + "\n/" + b.Name + "/" + path
+	stringToSign := method + "\n\n" + content_type + "\n" + strconv.FormatInt(expire_date, 10) + "\n"
+	
+	if headers != nil {
+		//Get all the keys.
+		keys := make([]string, 0, len(headers))
+		for k := range headers {
+			keys = append(keys, k)
+		}
+		//Sort them into the order expected by AWS.
+		sort.Strings(keys)
+		//Iterate through them and canonicalize
+		for _,key := range keys {
+			stringToSign = stringToSign + strings.ToLower(strings.TrimSpace(key)) + ":"
+			for i,val := range headers[key] {
+				if i != 0 {
+					stringToSign = stringToSign + ","
+				}
+				stringToSign = stringToSign + strings.TrimSpace(val)
+			}
+			stringToSign = stringToSign + "\n"
+		}
+	}
+
+	stringToSign = stringToSign + "/" + b.Name + "/" + path
+
 	fmt.Println("String to sign:\n", stringToSign)
 	a := b.S3.Auth
 	secretKey := a.SecretKey
